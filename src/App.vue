@@ -1,0 +1,65 @@
+<script setup lang="ts"></script>
+
+<template>
+  <nav>
+    <RouterLink to="/">首頁</RouterLink>
+    <RouterLink to="/uploadImage">回憶牆上傳</RouterLink>
+  </nav>
+  <RouterView class="flex-grow-1 flex flex-col" />
+</template>
+
+<style scoped>
+.logo {
+  display: inline;
+  margin: 0 auto 2rem;
+}
+
+nav {
+  background-color: #f4c0af;
+  width: 100%;
+  font-size: 12px;
+  text-align: center;
+}
+
+nav a.router-link-exact-active {
+  color: var(--color-white);
+}
+
+nav a.router-link-exact-active:hover {
+  background-color: transparent;
+}
+
+nav a {
+  display: inline-block;
+  padding: 0 1rem;
+  border-left: 1px solid var(--color-border);
+}
+
+nav a:first-of-type {
+  border: 0;
+}
+
+@media (min-width: 1024px) {
+  /* header {
+    display: flex;
+    place-items: center;
+    padding-right: calc(var(--section-gap) / 2);
+  } */
+
+  .logo {
+    margin: 0 2rem 0 0;
+  }
+
+  /* header .wrapper {
+    display: flex;
+    place-items: flex-start;
+    flex-wrap: wrap;
+  } */
+
+  nav {
+    text-align: left;
+    font-size: 1rem;
+    padding: 1rem;
+  }
+}
+</style>
