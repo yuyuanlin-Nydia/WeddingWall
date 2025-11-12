@@ -11,6 +11,10 @@ const props = defineProps({
     type: String,
     required: false,
   },
+  icon: {
+    default: '',
+    required: false,
+  },
 })
 
 const colorMap = {
@@ -29,12 +33,13 @@ defineEmits(['click'])
 <template>
   <button
     :class="[
-      'border rounded px-2 py-1 hover:border-transparent hover:text-white cursor-pointer',
+      'border rounded px-2 py-1 hover:border-transparent hover:text-white cursor-pointer flex items-center',
       className,
       colorClasses, // 動態顏色樣式
     ]"
     @click="$emit('click')"
   >
+    <i v-if="icon" :class="`mdi text-lg  ${icon}`"></i>
     <slot></slot>
   </button>
 </template>
