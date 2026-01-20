@@ -1,11 +1,12 @@
 <script setup lang="ts"></script>
 
 <template>
-  <nav>
+  <nav id="nav">
     <RouterLink to="/">首頁</RouterLink>
-    <RouterLink to="/uploadImage">回憶牆上傳</RouterLink>
+    <RouterLink to="/uploadImage">回憶上傳</RouterLink>
+    <RouterLink to="/memoryWall">回憶留言板</RouterLink>
   </nav>
-  <RouterView class="flex-grow-1 flex flex-col" />
+  <RouterView class="grow flex flex-col" />
 </template>
 
 <style scoped>

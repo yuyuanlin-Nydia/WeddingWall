@@ -1,17 +1,30 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, watch, nextTick, computed, onMounted } from 'vue'
 import { Cropper } from 'vue-advanced-cropper'
 import 'vue-advanced-cropper/dist/style.css'
+onMounted(() => {
+  console.log(localStorage.getItem('test'))
+})
+interface TextElement {
+  id: number
+  content: string
+  color: string
+  size: number
+  x: number
+  y: number
+}
 
 const imagePreview = ref<string | undefined>(undefined)
 const imgElement = ref<null | HTMLImageElement>(null)
 const imgCanvasRef = ref<null | HTMLCanvasElement>(null)
 const ctxRef = ref<null | CanvasRenderingContext2D>(null)
 const cropperRef = ref<any>(null)
-const isCropping = ref<boolean>(false)
 const angle = ref<number>(0)
-const MAX_DISPLAY_WIDTH = window.innerWidth // Define your max width
-const MAX_DISPLAY_HEIGHT = window.innerHeight // Define your max height
+const textElements = ref<TextElement[]>([])
+const activeTextElementId = ref<number | null>(null)
+const isEditingText = ref<boolean>(false)
+const MAX_DISPLAY_WIDTH = document.getElementById('app')?.getBoundingClientRect().width // Define your max width
+const MAX_DISPLAY_HEIGHT = document.getElementById('app')?.getBoundingClientRect().height // Define your max height
 const editObj = {
   rotate: {
     key: 'rotate',
@@ -20,7 +33,7 @@ const editObj = {
   },
   pen: {
     key: 'pen',
-    name: '畫筆',
+    name: '文字',
     icon: 'mdi-format-text',
   },
   cut: {
@@ -31,14 +44,19 @@ const editObj = {
 }
 const currentEdit = ref<null | string>(editObj.rotate.key)
 
-watch(angle, () => {
-  rotateImg()
+// isCropping is now a computed property derived from currentEdit.
+const isCropping = computed(() => currentEdit.value === editObj.cut.key)
+
+// The watcher is now simplified to only handle side-effects when leaving a mode.
+watch(currentEdit, (newValue) => {
+  if (newValue !== editObj.pen.key) {
+    activeTextElementId.value = null
+    isEditingText.value = false
+  }
 })
 
-watch(currentEdit, (newValue) => {
-  if (newValue !== editObj.cut.key) {
-    isCropping.value = false
-  }
+watch(angle, () => {
+  rotateImg()
 })
 
 async function handleImageChange(event) {
@@ -97,12 +115,17 @@ function drawCanvas() {
   ctx!.drawImage(img, 0, 0, displayWidth, displayHeight)
 
   ctxRef.value = ctx
+  drawAllTextElements()
 }
 
 function setCurrentEdit(edit: string) {
   currentEdit.value = edit
-  if (edit === editObj.cut.key) {
-    isCropping.value = true
+  // If pen tool is selected, immediately add a new text element in the center.
+  if (edit === editObj.pen.key) {
+    if (imgCanvasRef.value) {
+      const canvas = imgCanvasRef.value
+      addNewText(canvas.width / 2, canvas.height / 2)
+    }
   }
 }
 
@@ -141,8 +164,6 @@ function rotateImg() {
     displayHeight = rotatedBoundingBoxHeight * scaleFactor
   }
 
-  // Clear the canvas
-
   // Update canvas dimensions
   canvas.width = displayWidth
   canvas.height = displayHeight
@@ -167,6 +188,7 @@ function rotateImg() {
 
   // Restore the canvas state
   ctx.restore()
+  drawAllTextElements()
 }
 function downloadImage() {
   const canvas = imgCanvasRef.value
@@ -198,7 +220,7 @@ function crop() {
       const img = new Image()
       img.src = imagePreview.value
       img.onload = () => {
-        isCropping.value = false
+        // No longer need to set isCropping to false manually
         imgElement.value = img
         drawCanvas()
         currentEdit.value = null
@@ -206,116 +228,396 @@ function crop() {
     }
   }
 }
+
+function drawAllTextElements() {
+  const ctx = ctxRef.value
+  if (!ctx) return
+
+  textElements.value.forEach((textEl) => {
+    if (isEditingText.value && textEl.id === activeTextElementId.value) {
+      return // Skip drawing the active text element if it's being edited
+    }
+    ctx.font = `${textEl.size}px Arial`
+    ctx.fillStyle = textEl.color
+    console.log(textEl.x)
+    console.log(textEl.y)
+    ctx.fillText(textEl.content, textEl.x, textEl.y)
+  })
+}
+
+function addNewText(x: number, y: number) {
+  const newText: TextElement = {
+    id: Date.now(),
+    content: '',
+    color: '#000000',
+    size: 16,
+    x: x,
+    y: y,
+  }
+  textElements.value.push(newText)
+  activeTextElementId.value = newText.id
+  isEditingText.value = true // Hide canvas text immediately
+  // drawCanvas() // Redraw to ensure clean state
+
+  nextTick(() => {
+    const input = document.getElementById(`text-input-${newText.id}`) as HTMLInputElement
+    if (input) {
+      input.focus()
+    }
+  })
+}
+
+// Now only handles clicking on existing text.
+function handleCanvasClick(event: MouseEvent) {
+  if (currentEdit.value !== editObj.pen.key || !imgCanvasRef.value) return
+
+  const canvas = imgCanvasRef.value
+  const ctx = ctxRef.value
+  if (!ctx) return
+
+  const rect = canvas.getBoundingClientRect()
+  const clickX = event.clientX - rect.left
+  const clickY = event.clientY - rect.top
+
+  // Iterate backwards to check topmost text first
+  for (let i = textElements.value.length - 1; i >= 0; i--) {
+    const textEl = textElements.value[i]
+
+    ctx.font = `${textEl.size}px Arial`
+    const metrics = ctx.measureText(textEl.content)
+    const textWidth = metrics.width
+
+    // Bounding box check
+    const isXMatch = clickX >= textEl.x && clickX <= textEl.x + textWidth
+    // Note: The y-coordinate is the baseline. The clickable area is roughly from y-size to y.
+    const isYMatch = clickY >= textEl.y - textEl.size && clickY <= textEl.y
+
+    if (isXMatch && isYMatch) {
+      // Clicked on existing text
+      activeTextElementId.value = textEl.id
+      isEditingText.value = true
+      drawCanvas() // Redraw to hide the canvas text
+
+      nextTick(() => {
+        const input = document.getElementById(`text-input-${textEl.id}`) as HTMLInputElement
+        if (input) {
+          input.focus()
+        }
+      })
+      break // Stop after finding the first match
+    }
+  }
+}
+
+function handleBlur(event: FocusEvent) {
+  const relatedTarget = event.relatedTarget as HTMLElement | null
+
+  if (relatedTarget && (relatedTarget.id === 'textColor' || relatedTarget.id === 'textSize')) {
+    return
+  }
+  isEditingText.value = false
+  activeTextElementId.value = null
+  drawCanvas()
+}
+
+function updateTextContent(id: number, event: Event) {
+  const target = event.target as HTMLInputElement
+  const textEl = textElements.value.find((el) => el.id === id)
+  if (textEl) {
+    textEl.content = target.value
+  }
+}
+
+function updateTextColor(id: number, event: Event) {
+  const target = event.target as HTMLInputElement
+  const textEl = textElements.value.find((el) => el.id === id)
+  if (textEl) {
+    textEl.color = target.value
+  }
+}
+
+function updateTextSize(id: number, event: Event) {
+  const target = event.target as HTMLInputElement
+  const textEl = textElements.value.find((el) => el.id === id)
+  if (textEl) {
+    textEl.size = parseInt(target.value)
+  }
+}
+
+function selectTextElement(id: number) {
+  activeTextElementId.value = id
+}
+
+let isDraggingText = false
+let dragOffsetX = 0
+let dragOffsetY = 0
+
+function handleTextMouseDown(event: MouseEvent, textEl: TextElement) {
+  if (currentEdit.value === editObj.pen.key) {
+    isDraggingText = true
+    activeTextElementId.value = textEl.id
+    const canvas = imgCanvasRef.value
+    if (canvas) {
+      const rect = canvas.getBoundingClientRect()
+      dragOffsetX = event.clientX - rect.left
+      dragOffsetY = event.clientY - rect.top
+    }
+    event.stopPropagation() // Prevent canvas click event from firing
+  }
+}
+
+function handleCanvasMouseMove(event: MouseEvent) {
+  if (isDraggingText && activeTextElementId.value !== null && imgCanvasRef.value) {
+    const canvas = imgCanvasRef.value
+    const rect = canvas.getBoundingClientRect()
+    const mouseX = event.clientX - rect.left
+    const mouseY = event.clientY - rect.top
+
+    const activeText = textElements.value.find((el) => el.id === activeTextElementId.value)
+    if (activeText) {
+      activeText.x = mouseX
+      activeText.y = mouseY
+    }
+  }
+}
+
+function handleCanvasMouseUp() {
+  isDraggingText = false
+}
+
+function finishTextEdit() {
+  isEditingText.value = false
+  activeTextElementId.value = null
+  drawCanvas()
+}
+function reset() {
+  imagePreview.value = undefined
+  angle.value = 0
+  textElements.value = []
+}
 </script>
 
 <template>
-  <div class="image-edit-page flex justify-end items-center flex-col grow">
-    <div class="function-bar self-end">
-      <div
-        class="cursor-pointer hover:rounded-full hover:bg-gray-300 w-10 h-10 flex justify-center items-center"
-        @click="downloadImage"
-        v-if="imagePreview"
+  <div class="image-edit-page relative">
+    <div class="function-bar justify-between absolute top-1 left-0" v-if="imagePreview">
+      <button
+        class="bg-gray-100 rounded-full w-8 h-8 flex items-center justify-center cursor-pointer left-2 absolute"
+        @click="reset"
       >
-        <i class="mdi mdi-download text-2xl"></i>
+        <i class="mdi text-lg mdi-close" />
+      </button>
+      <div class="flex">
+        <div
+          class="cursor-pointer hover:rounded-full hover:bg-gray-300 w-10 h-10 flex justify-center items-center right-5"
+          @click="downloadImage"
+        >
+          <i class="mdi mdi-download text-2xl"></i>
+        </div>
+        <div
+          class="cursor-pointer hover:rounded-full hover:bg-gray-300 w-10 h-10 flex justify-center items-center right-5"
+          @click="uploadImage"
+        >
+          <i class="mdi mdi-upload text-2xl"></i>
+        </div>
       </div>
     </div>
-    <template v-if="imagePreview">
-      <div class="flex justify-center items-center flex-wrap grow">
-        <canvas ref="imgCanvasRef" id="imageCanvas" v-show="imagePreview && !isCropping" />
-        <Cropper
-          ref="cropperRef"
-          :src="imagePreview"
-          v-if="isCropping"
-          style="width: 100%; height: 100%"
-        />
-      </div>
-      <div class="sticky bottom-15">
-        <div v-if="currentEdit === editObj.rotate.key">
-          <div>
+    <div class="image-edit-container flex justify-end flex-col grow relative rounded-4xl">
+      <template v-if="imagePreview">
+        <div class="absolute z-3 top-3 w-[calc(100%-30px)]"></div>
+        <div class="flex justify-center items-center flex-wrap grow relative">
+          <div
+            class="slider-container"
+            v-if="currentEdit === editObj.pen.key && activeTextElementId !== null"
+          >
             <input
+              class="slider w-full"
               type="range"
-              id="volume"
-              name="volume"
-              min="-270"
-              max="270"
-              v-model="angle"
-              class="mr-1 py-1"
-              @input="rotateImg"
+              v-model="textElements.find((el) => el.id === activeTextElementId)!.size"
+              id="textSize"
+              min="10"
+              max="100"
             />
-            <br />
-            <div class="flex justify-center gap-4 items-center">
-              <i
-                class="mdi mdi-rotate-right-variant text-2xl text-white"
-                @click="rotateAngle(90, 'cw')"
-              ></i>
+          </div>
+          <div class="relative">
+            <canvas
+              ref="imgCanvasRef"
+              id="imageCanvas"
+              v-show="imagePreview && !isCropping"
+              @click="handleCanvasClick"
+            />
+            <!-- @mousedown="handleCanvasMouseDown"
+            @mousemove="handleCanvasMouseMove"
+            @mouseup="handleCanvasMouseUp" -->
+            <Cropper
+              ref="cropperRef"
+              :src="imagePreview"
+              v-if="isCropping"
+              style="width: 100%; height: 100%"
+            />
+
+            <!-- Dynamic text input fields -->
+            <template v-if="currentEdit === editObj.pen.key">
               <div
-                class="bg-gray-300 text-center rounded-full flex flex-col justify-center"
-                style="min-width: 58px; min-height: 58px"
+                v-for="textEl in textElements"
+                :key="textEl.id"
+                :style="{
+                  position: 'absolute',
+                  left: `${textEl.x}px`,
+                  top: `${textEl.y - textEl.size}px`,
+                }"
+                @mousedown="handleTextMouseDown($event, textEl)"
+                @click.stop="selectTextElement(textEl.id)"
               >
-                <span>{{ angle }}</span>
+                <input
+                  v-if="activeTextElementId === textEl.id"
+                  :id="`text-input-${textEl.id}`"
+                  type="text"
+                  v-model="textEl.content"
+                  :style="{
+                    fontSize: `${textEl.size}px`,
+                    lineHeight: 1,
+                    color: textEl.color,
+                    border: 'none',
+                    padding: '0',
+                    background: 'transparent',
+                    outline: '0',
+                    // visibility: 'hidden',
+                  }"
+                  @focus="((isEditingText = true), drawCanvas())"
+                  @blur="handleBlur($event)"
+                />
               </div>
-              <i
-                class="mdi mdi-rotate-left-variant text-2xl text-white"
-                @click="rotateAngle(90, 'ccw')"
-              ></i>
+            </template>
+          </div>
+        </div>
+        <div class="fixed bottom-25 -translate-x-1/2 left-1/2">
+          <div v-if="currentEdit === editObj.rotate.key">
+            <div>
+              <input
+                type="range"
+                id="volume"
+                name="volume"
+                min="-270"
+                max="270"
+                v-model="angle"
+                class="mr-1 py-1"
+                @input="rotateImg"
+              />
+              <br />
+              <div class="flex justify-center gap-4 items-center">
+                <i
+                  class="mdi mdi-rotate-right-variant text-2xl text-white cursor-pointer"
+                  @click="rotateAngle(90, 'cw')"
+                ></i>
+                <div
+                  class="bg-gray-300 text-center rounded-full flex flex-col justify-center"
+                  style="min-width: 58px; min-height: 58px"
+                >
+                  <span>{{ angle }}</span>
+                </div>
+                <i
+                  class="mdi mdi-rotate-left-variant text-2xl text-white cursor-pointer"
+                  @click="rotateAngle(90, 'ccw')"
+                ></i>
+              </div>
+            </div>
+          </div>
+          <div v-if="currentEdit === editObj.cut.key && isCropping">
+            <button
+              @click="((isCropping = false), (currentEdit = null))"
+              class="text-gray-700 bg-gray-300 px-2 py-1 rounded mr-2 cursor-pointer"
+            >
+              取消
+            </button>
+            <button
+              @click="crop"
+              class="text-gray-700 bg-amber-300 px-2 py-1 rounded cursor-pointer"
+            >
+              完成
+            </button>
+          </div>
+          <div v-if="currentEdit === editObj.pen.key && activeTextElementId !== null">
+            <div class="flex flex-col gap-2 mt-2">
+              <div class="flex items-center gap-2">
+                <input
+                  type="color"
+                  v-model="textElements.find((el) => el.id === activeTextElementId)!.color"
+                  id="textColor"
+                />
+                <button
+                  @click="finishTextEdit"
+                  class="text-gray-700 bg-amber-300 px-2 py-1 rounded ml-auto cursor-pointer"
+                >
+                  完成
+                </button>
+              </div>
             </div>
           </div>
         </div>
-        <div v-if="currentEdit === editObj.cut.key && isCropping">
+        <div class="flex justify-center gap-4 w-full sticky bottom-0 text-white p-3">
           <button
-            @click="((isCropping = false), (currentEdit = null))"
-            class="text-gray-700 bg-gray-300 px-2 py-1 rounded mr-2"
+            :class="[
+              'cursor-pointer px-2 py-1 rounded transition-colors flex flex-col',
+              editItem.key === currentEdit
+                ? 'bg-gray-200 text-gray-500 active:bg-gray-200 shadow-2xl'
+                : 'bg-gray-500 text-white hover:bg-gray-200 hover:text-gray-500',
+            ]"
+            @click="setCurrentEdit(editItem.key)"
+            v-for="editItem in Object.values(editObj)"
+            :key="editItem.key"
           >
-            取消
+            <i :class="`mdi text-md ${editItem.icon}`"></i>
+            <span class="text-xs">{{ editItem.name }}</span>
           </button>
-          <button @click="crop" class="text-gray-700 bg-amber-300 px-2 py-1 rounded">完成</button>
         </div>
-        <div v-if="currentEdit === editObj.pen.key">畫筆</div>
-      </div>
-      <div class="flex justify-center gap-4 w-full sticky bottom-0 text-white p-3">
-        <button
-          :class="[
-            'cursor-pointer px-2 py-1 rounded transition-colors flex flex-col',
-            editItem.key === currentEdit
-              ? 'bg-gray-200 text-gray-500 active:bg-gray-200 shadow-2xl'
-              : 'bg-gray-500 text-white hover:bg-gray-200 hover:text-gray-500',
-          ]"
-          @click="setCurrentEdit(editItem.key)"
-          v-for="editItem in Object.values(editObj)"
-          :key="editItem.key"
-        >
-          <i :class="`mdi text-md ${editItem.icon}`"></i>
-          <span class="text-xs">{{ editItem.name }}</span>
-        </button>
-      </div>
-    </template>
-    <template v-else>
-      <div class="flex justify-center items-center flex-wrap grow">
-        <label class="cursor-pointer">
-          <input
-            id="upload_img"
-            style="display: none"
-            type="file"
-            accept="image/*"
-            @change="handleImageChange"
-          />
-          <p class="rounded-xl p-6 text-gray-600 bg-white/60 flex flex-col items-center">
-            <i class="mdi mdi-camera text-4xl"></i>
-            請上傳你和新郎/新娘的專屬回憶和祝福
-          </p>
-        </label>
-      </div></template
-    >
+      </template>
+      <template v-else>
+        <div class="flex justify-center items-center flex-wrap grow">
+          <label class="cursor-pointer">
+            <input
+              id="upload_img"
+              style="display: none"
+              type="file"
+              accept="image/*"
+              @change="handleImageChange"
+            />
+            <p class="rounded-xl p-6 text-gray-600 bg-white/60 flex flex-col items-center">
+              <i class="mdi mdi-camera text-4xl"></i>
+              請上傳你和新郎/新娘的專屬回憶和祝福
+            </p>
+          </label>
+        </div></template
+      >
+    </div>
   </div>
 </template>
 
 <style scoped>
 .function-bar {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
 }
 .image-edit-page {
-  padding: 15px;
+  padding: 40px 10px 10px;
+  background-color: lightgrey;
+}
+.image-edit-container {
   background: url('../assets/image/uploadBg.jpg') no-repeat center center / 300%;
+}
+.slider-container {
+  display: block;
+  position: absolute;
+  left: -15%;
+  top: 50%;
+  z-index: 2;
+  transform: rotate(-90deg);
+}
+
+.slider {
+  writing-mode: bt-lr;
+}
+
+.slider::-webkit-slider-thumb {
+  transform: rotate(90deg);
 }
 </style>

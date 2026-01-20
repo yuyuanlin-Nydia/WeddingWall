@@ -6,9 +6,19 @@
 
 #app {
   font-weight: normal;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  width: 375px;
+  height: 667px;
+  margin: 0 auto;
+}
+
+@media (max-width: 500px) {
+  #app {
+    width: 100%;
+  }
 }
 
 a,
