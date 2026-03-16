@@ -7,17 +7,18 @@
         class="dot"
         :class="{ active: currentIndex === index }"
         @click.stop="goToSlide(index)"
-      ></div>
+      />
     </div>
-    <div class="w-full mt-3 ml-3 absolute">Nydia Lin</div>
-    <AdvancedImage :cldImg="myImg" />
+    <div class="w-full mt-3 ml-3 absolute text-gray-500">
+      {{ images[currentIndex]?.context?.custom?.uploader_name || '' }}
+    </div>
     <div
       class="carousel-slide"
       @click="nextSlide"
       :style="{ transform: `translateX(-${currentIndex * 100}%)` }"
     >
       <div v-for="(image, index) in images" :key="index" class="carousel-item">
-        <img :src="image" alt="Carousel Image" />
+        <AdvancedImage :cldImg="image.asset" />
       </div>
     </div>
   </div>
@@ -25,13 +26,17 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
+import { Cloudinary } from '@cloudinary/url-gen'
+import { AdvancedImage } from '@cloudinary/vue'
+import { fill } from '@cloudinary/url-gen/actions/resize'
 
-const images = ref([
-  'https://placehold.co/600x400/png',
-  'https://placehold.co/500x200/png',
-  'https://placehold.co/400x100/png',
-  'https://placehold.co/300x400/png',
-])
+const cld = new Cloudinary({
+  cloud: {
+    cloudName: 'dkpitcfi9',
+  },
+})
+
+const images = ref([])
 
 const currentIndex = ref(0)
 let intervalId: any = null
@@ -51,9 +56,25 @@ const startAutoPlay = (interval: number) => {
 const stopAutoPlay = () => {
   clearInterval(intervalId)
 }
-
-onMounted(() => {
+onMounted(async () => {
   startAutoPlay(3000) // Change image every 3 seconds
+
+  try {
+    const res = await fetch(
+      'https://res.cloudinary.com/dkpitcfi9/image/list/engagement.json?metadata=true',
+    )
+
+    const data = await res.json()
+    images.value = data.resources.map((image: any) => {
+      return {
+        ...image,
+        asset: cld.image(image.public_id).resize(fill().width(2000)),
+      }
+    })
+    console.log(images.value)
+  } catch (error) {
+    console.error('Error fetching images from Cloudinary:', error)
+  }
 })
 
 onUnmounted(() => {
@@ -68,7 +89,6 @@ onUnmounted(() => {
   margin: auto;
   overflow: hidden;
   position: relative;
-  border-radius: 8px;
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
 }
 .carousel-container::before {
@@ -77,7 +97,7 @@ onUnmounted(() => {
   background: url('../assets/image/memoryWallBg.jpg') no-repeat center top / auto 100%;
   height: 100%;
   width: 100%;
-  opacity: 0.5;
+  /* opacity: 0.5; */
   position: absolute;
   /* 偏移值皆設為 0，讓僞元素跟父元素一樣大小 */
   top: 0;

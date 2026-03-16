@@ -2,6 +2,14 @@
 import { ref, watch, nextTick, computed, onMounted } from 'vue'
 import { Cropper } from 'vue-advanced-cropper'
 import 'vue-advanced-cropper/dist/style.css'
+import { useUiStore } from '@/stores/ui'
+import { useRouter } from 'vue-router'
+import NameDialog from '@/components/NameDialog.vue'
+
+const uiStore = useUiStore()
+const isNameDialogOpen = ref(false)
+const uploaderName = ref('')
+
 onMounted(() => {
   console.log(localStorage.getItem('test'))
 })
@@ -46,6 +54,8 @@ const currentEdit = ref<null | string>(editObj.rotate.key)
 
 // isCropping is now a computed property derived from currentEdit.
 const isCropping = computed(() => currentEdit.value === editObj.cut.key)
+
+const router = useRouter()
 
 // The watcher is now simplified to only handle side-effects when leaving a mode.
 watch(currentEdit, (newValue) => {
@@ -395,6 +405,62 @@ function reset() {
   angle.value = 0
   textElements.value = []
 }
+function openNameDialog() {
+  isNameDialogOpen.value = true
+}
+
+async function handleNameConfirm(name: string) {
+  uploaderName.value = name
+  await uploadImage()
+}
+
+async function uploadImage() {
+  const canvas = imgCanvasRef.value
+  if (!canvas) return
+  const cloudName = 'dkpitcfi9'
+  const uploadPreset = 'wedding_'
+  uiStore.showLoader()
+  try {
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
+    if (!blob) {
+      throw new Error('Failed to get blob from canvas')
+    }
+    const formData = new FormData()
+    formData.append('file', blob, 'edited-image.png')
+    formData.append('upload_preset', uploadPreset)
+    formData.append('tags', 'engagement')
+    
+    // 將名字作為 metadata 或 context 上傳
+    if (uploaderName.value) {
+      formData.append('context', `uploader_name=${uploaderName.value}`)
+    }
+
+    const response = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/upload`, {
+      method: 'POST',
+      body: formData,
+    })
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`)
+    }
+    const data = await response.json()
+    console.log('Upload successful:', data)
+    uiStore.showSnackbar({
+      text: '上傳成功',
+      type: 'success',
+      icon: 'mdi-check',
+    })
+    router.push({ name: 'memoryWall' })
+  } catch (error) {
+    console.error('Upload failed:', error)
+    uiStore.showSnackbar({
+      text: `上傳失敗: ${error.message}`,
+      type: 'error',
+      icon: 'mdi-alert-circle-outline',
+    })
+  } finally {
+    uiStore.hideLoader()
+  }
+}
 </script>
 
 <template>
@@ -415,13 +481,20 @@ function reset() {
         </div>
         <div
           class="cursor-pointer hover:rounded-full hover:bg-gray-300 w-10 h-10 flex justify-center items-center right-5"
-          @click="uploadImage"
+          @click="openNameDialog"
         >
           <i class="mdi mdi-upload text-2xl"></i>
         </div>
       </div>
     </div>
-    <div class="image-edit-container flex justify-end flex-col grow relative rounded-4xl">
+    <div
+      :class="[
+        'flex justify-end flex-col grow relative rounded-4xl',
+        {
+          'image-edit-bg': !imagePreview,
+        },
+      ]"
+    >
       <template v-if="imagePreview">
         <div class="absolute z-3 top-3 w-[calc(100%-30px)]"></div>
         <div class="flex justify-center items-center flex-wrap grow relative">
@@ -452,7 +525,7 @@ function reset() {
               ref="cropperRef"
               :src="imagePreview"
               v-if="isCropping"
-              style="width: 100%; height: 100%"
+              style="width: 330px; height: auto"
             />
 
             <!-- Dynamic text input fields -->
@@ -525,7 +598,7 @@ function reset() {
           <div v-if="currentEdit === editObj.cut.key && isCropping">
             <button
               @click="((isCropping = false), (currentEdit = null))"
-              class="text-gray-700 bg-gray-300 px-2 py-1 rounded mr-2 cursor-pointer"
+              class="text-gray-700 bg-white px-2 py-1 rounded mr-2 cursor-pointer"
             >
               取消
             </button>
@@ -589,6 +662,12 @@ function reset() {
         </div></template
       >
     </div>
+    <NameDialog
+      v-model="isNameDialogOpen"
+      title="請輸入您的名字"
+      placeholder="輸入名字以標記您的上傳"
+      @confirm="handleNameConfirm"
+    />
   </div>
 </template>
 
@@ -599,10 +678,11 @@ function reset() {
 }
 .image-edit-page {
   padding: 40px 10px 10px;
-  background-color: lightgrey;
+  background-color: rgb(246, 224, 227);
 }
-.image-edit-container {
-  background: url('../assets/image/uploadBg.jpg') no-repeat center center / 300%;
+.image-edit-bg {
+  opacity: 0.8;
+  background: url('../assets/image/uploadBg.jpg') no-repeat center center / 100%;
 }
 .slider-container {
   display: block;

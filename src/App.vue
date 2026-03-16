@@ -1,12 +1,17 @@
-<script setup lang="ts"></script>
+<script setup lang="ts">
+import LoadingOverlay from '@/components/LoadingOverlay.vue'
+import Snackbar from '@/components/SnackBar.vue'
+</script>
 
 <template>
   <nav id="nav">
     <RouterLink to="/">首頁</RouterLink>
     <RouterLink to="/uploadImage">回憶上傳</RouterLink>
-    <RouterLink to="/memoryWall">回憶留言板</RouterLink>
+    <RouterLink to="/memoryWall">回憶留言版</RouterLink>
   </nav>
   <RouterView class="grow flex flex-col" />
+  <LoadingOverlay />
+  <Snackbar />
 </template>
 
 <style scoped>
