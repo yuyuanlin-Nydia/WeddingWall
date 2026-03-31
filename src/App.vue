@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import LoadingOverlay from '@/components/LoadingOverlay.vue'
 import Snackbar from '@/components/SnackBar.vue'
+import { useRoute } from 'vue-router'
+const route = useRoute()
 </script>
 
 <template>
-  <nav id="nav">
+  <nav id="nav" v-if="route.name !== 'memoryWall'">
     <RouterLink to="/">首頁</RouterLink>
     <RouterLink to="/uploadImage">回憶上傳</RouterLink>
     <RouterLink to="/memoryWall">回憶留言版</RouterLink>

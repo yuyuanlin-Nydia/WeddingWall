@@ -4,8 +4,9 @@ import { computed } from 'vue'
 const props = defineProps({
   color: {
     type: String,
-    default: 'blue', // 預設使用 blue
-    validator: (value) => ['blue', 'green', 'red', 'purple'].includes(value),
+    default: 'blue',
+    validator: (value: unknown) =>
+      typeof value === 'string' && ['blue', 'green', 'red', 'purple'].includes(value),
   },
   className: {
     type: String,
@@ -17,7 +18,7 @@ const props = defineProps({
   },
 })
 
-const colorMap = {
+const colorMap: Record<string, string> = {
   blue: 'border-blue-600 text-blue-600 hover:bg-blue-600 active:bg-blue-700',
   green: 'border-green-600 text-green-600 hover:bg-green-600 active:bg-green-700',
   red: 'border-red-600 text-red-600 hover:bg-red-600 active:bg-red-700',
@@ -25,7 +26,7 @@ const colorMap = {
 }
 
 const colorClasses = computed(() => {
-  return colorMap[props.color] || colorMap.blue
+  return colorMap[props.color as string] || colorMap.blue
 })
 defineEmits(['click'])
 </script>
