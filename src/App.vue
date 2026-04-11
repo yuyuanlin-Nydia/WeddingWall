@@ -1,8 +1,17 @@
 <script setup lang="ts">
 import LoadingOverlay from '@/components/LoadingOverlay.vue'
 import Snackbar from '@/components/SnackBar.vue'
+import { onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 const route = useRoute()
+onMounted(() => {
+  window.addEventListener('resize', setVH)
+  setVH()
+})
+
+function setVH() {
+  document.documentElement.style.setProperty('--innerHeight', `${window.innerHeight}px`)
+}
 </script>
 
 <template>
@@ -60,6 +69,6 @@ nav a:first-of-type {
 nav {
   text-align: left;
   font-size: 1rem;
-  padding: 1rem;
+  padding: 1rem 0;
 }
 </style>

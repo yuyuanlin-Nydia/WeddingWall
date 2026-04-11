@@ -27,6 +27,9 @@ watch(
   (newVal) => {
     if (newVal) {
       inputValue.value = ''
+      document.body.style.overflow = 'hidden'
+    } else {
+      document.body.style.overflow = 'unset'
     }
   },
 )

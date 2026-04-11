@@ -44,7 +44,7 @@
 }
 
 body {
-  max-height: 100dvh;
+  max-height: calc(var(--innerHeight));
   overflow: hidden;
   color: var(--color-text);
   background: var(--color-background);

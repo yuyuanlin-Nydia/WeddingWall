@@ -1,5 +1,12 @@
 <template>
-  <div class="carousel-container" @mouseover="stopAutoPlay" @mouseleave="startAutoPlay(3000)">
+  <div
+    class="carousel-container"
+    @pointerdown="handlePointerDown"
+    @pointerup="handlePointerUp"
+    @mouseover="stopAutoPlay"
+    @mouseleave="startAutoPlay(3000)"
+    style="touch-action: none"
+  >
     <div class="carousel-dots" :style="{ '--num-images': images.length }">
       <div
         v-for="(image, index) in images"
@@ -9,14 +16,13 @@
         @click.stop="goToSlide(index)"
       />
     </div>
-    <div class="w-full mt-3 ml-3 absolute text-gray-500">
+    <div class="close-btn" @click="router.push('/')">
+      <i class="mdi mdi-close text-2xl" />
+    </div>
+    <div class="w-full mt-4 ml-2 absolute text-gray-500 z-1 pointer-events-none">
       {{ images[currentIndex]?.context?.custom?.uploader_name || '' }}
     </div>
-    <div
-      class="carousel-slide"
-      @click="nextSlide"
-      :style="{ transform: `translateX(-${currentIndex * 100}%)` }"
-    >
+    <div class="carousel-slide" :style="{ transform: `translateX(-${currentIndex * 100}%)` }">
       <div v-for="(image, index) in images" :key="index" class="carousel-item">
         <AdvancedImage :cldImg="image.asset" />
       </div>
@@ -29,20 +35,37 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { Cloudinary } from '@cloudinary/url-gen'
 import { AdvancedImage } from '@cloudinary/vue'
 import { fill } from '@cloudinary/url-gen/actions/resize'
+import { useRouter } from 'vue-router'
 
+const router = useRouter()
 const cld = new Cloudinary({
   cloud: {
     cloudName: 'dkpitcfi9',
   },
 })
 
-const images = ref([])
+interface CloudinaryImage {
+  context?: {
+    custom?: {
+      uploader_name?: string
+    }
+  }
+  asset: any
+  [key: string]: any
+}
 
+const images = ref<CloudinaryImage[]>([])
 const currentIndex = ref(0)
 let intervalId: any = null
+let startX = 0
+let startTime = 0
 
 const nextSlide = () => {
   currentIndex.value = (currentIndex.value + 1) % images.value.length
+}
+
+const prevSlide = () => {
+  currentIndex.value = (currentIndex.value - 1 + images.value.length) % images.value.length
 }
 
 const goToSlide = (index: number) => {
@@ -50,11 +73,51 @@ const goToSlide = (index: number) => {
 }
 
 const startAutoPlay = (interval: number) => {
+  stopAutoPlay()
   intervalId = setInterval(nextSlide, interval)
 }
 
 const stopAutoPlay = () => {
-  clearInterval(intervalId)
+  if (intervalId) {
+    clearInterval(intervalId)
+    intervalId = null
+  }
+}
+
+const handlePointerDown = (e: PointerEvent) => {
+  startX = e.clientX
+  startTime = Date.now()
+
+  // 手指/滑鼠按下即停止自動播放
+  stopAutoPlay()
+}
+
+const handlePointerUp = (e: PointerEvent) => {
+  const endX = e.clientX
+  const endTime = Date.now()
+  const diffX = endX - startX
+  const diffTime = endTime - startTime
+
+  // 滑動邏輯 (閾值設為 50px)
+  if (Math.abs(diffX) > 50) {
+    if (diffX > 0) {
+      prevSlide() // 向右滑動，切換至上一張
+    } else {
+      nextSlide() // 向左滑動，切換至下一張
+    }
+  } else if (diffTime < 300) {
+    // 短點擊邏輯 (點擊左半邊或右半邊)
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    const clickX = e.clientX - rect.left
+    if (clickX > rect.width / 2) {
+      nextSlide()
+    } else {
+      prevSlide()
+    }
+  }
+
+  // 手指/滑鼠放開即重新開始自動播放
+  startAutoPlay(3000)
 }
 onMounted(async () => {
   startAutoPlay(3000) // Change image every 3 seconds
@@ -85,7 +148,6 @@ onUnmounted(() => {
 <style scoped>
 .carousel-container {
   width: 100%;
-  max-width: 800px;
   margin: auto;
   overflow: hidden;
   position: relative;
@@ -131,7 +193,7 @@ onUnmounted(() => {
   display: flex;
   width: 100%; /* Added to span full width */
   justify-content: center; /* Changed from space-around to center */
-  gap: 10px; /* Added gap for spacing between lines */
+  gap: 4px; /* Added gap for spacing between lines */
   padding: 5px 0; /* Add some padding */
   z-index: 10; /* Ensure dots are above the slide */
 }
@@ -140,7 +202,7 @@ onUnmounted(() => {
   cursor: pointer;
   height: 4px; /* Changed from 12px for a thin line */
   width: calc(
-    (100% / var(--num-images)) - 10px
+    (100% / var(--num-images)) - 4px
   ); /* Dynamic width based on number of images, adjusted for gap */
   margin: 0; /* Changed from 0 5px */
   background-color: #d3d3d3; /* Light gray for inactive */
@@ -151,5 +213,19 @@ onUnmounted(() => {
 
 .dot.active {
   background-color: #333333; /* Dark gray for active */
+}
+
+.close-btn {
+  position: absolute;
+  top: 15px;
+  right: 15px;
+  color: white;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 20;
 }
 </style>
