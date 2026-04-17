@@ -28,7 +28,7 @@ const uiStore = useUiStore()
 
 .loading-content {
   background-color: white;
-  padding: 20px;
+  padding: 10px 20px;
   border-radius: 5px;
 }
 </style>

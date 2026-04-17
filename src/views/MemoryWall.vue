@@ -1,6 +1,7 @@
 <template>
   <div
     class="carousel-container"
+    :class="{ 'no-images': images.length === 0 }"
     @pointerdown="handlePointerDown"
     @pointerup="handlePointerUp"
     @mouseover="stopAutoPlay"
@@ -19,13 +20,18 @@
     <div class="close-btn" @click="router.push('/')">
       <i class="mdi mdi-close text-2xl" />
     </div>
-    <div class="w-full mt-4 ml-2 absolute text-gray-500 z-1 pointer-events-none">
+    <div class="w-full mt-4 ml-2 absolute text-gray-700 z-1 pointer-events-none">
       {{ images[currentIndex]?.context?.custom?.uploader_name || '' }}
     </div>
     <div class="carousel-slide" :style="{ transform: `translateX(-${currentIndex * 100}%)` }">
-      <div v-for="(image, index) in images" :key="index" class="carousel-item">
-        <AdvancedImage :cldImg="image.asset" />
-      </div>
+      <template v-if="images.length">
+        <div v-for="(image, index) in images" :key="index" class="carousel-item">
+          <AdvancedImage :cldImg="image.asset" />
+        </div>
+      </template>
+      <template v-else>
+        <div class="text-center w-full text-xl text-white">目前尚無圖片</div>
+      </template>
     </div>
   </div>
 </template>
@@ -55,8 +61,9 @@ interface CloudinaryImage {
 }
 
 const images = ref<CloudinaryImage[]>([])
+const fetchPhotoIntervalId = ref<undefined | number>(undefined)
 const currentIndex = ref(0)
-let intervalId: any = null
+const carouselIntervalId = ref<undefined | number>(undefined)
 let startX = 0
 let startTime = 0
 
@@ -74,13 +81,12 @@ const goToSlide = (index: number) => {
 
 const startAutoPlay = (interval: number) => {
   stopAutoPlay()
-  intervalId = setInterval(nextSlide, interval)
+  carouselIntervalId.value = setInterval(nextSlide, interval)
 }
 
 const stopAutoPlay = () => {
-  if (intervalId) {
-    clearInterval(intervalId)
-    intervalId = null
+  if (carouselIntervalId.value) {
+    clearInterval(carouselIntervalId.value)
   }
 }
 
@@ -121,7 +127,19 @@ const handlePointerUp = (e: PointerEvent) => {
 }
 onMounted(async () => {
   startAutoPlay(3000) // Change image every 3 seconds
+  fetchPhoto()
+  //30秒更新一次資料
+  fetchPhotoIntervalId.value = setInterval(() => {
+    fetchPhoto()
+  }, 1000 * 30)
+})
 
+onUnmounted(() => {
+  stopAutoPlay()
+  clearInterval(fetchPhotoIntervalId.value)
+})
+
+const fetchPhoto = async () => {
   try {
     const res = await fetch(
       'https://res.cloudinary.com/dkpitcfi9/image/list/engagement.json?metadata=true',
@@ -134,26 +152,22 @@ onMounted(async () => {
         asset: cld.image(image.public_id).resize(fill().width(2000)),
       }
     })
-    console.log(images.value)
   } catch (error) {
     console.error('Error fetching images from Cloudinary:', error)
   }
-})
-
-onUnmounted(() => {
-  stopAutoPlay()
-})
+}
 </script>
 
 <style scoped>
 .carousel-container {
   width: 100%;
+  height: 100vh; /* Full screen height */
   margin: auto;
   overflow: hidden;
   position: relative;
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
 }
-.carousel-container::before {
+.carousel-container.no-images::before {
   content: '';
   display: block;
   background: url('../assets/image/memoryWallBg.jpg') no-repeat center top / auto 100%;
@@ -176,13 +190,18 @@ onUnmounted(() => {
 
 .carousel-item {
   min-width: 100%;
+  height: 100%; /* Fill slide height */
+  display: flex;
+  align-items: center;
+  justify-content: center;
   box-sizing: border-box;
 }
 
 .carousel-item img {
   width: 100%;
+  height: 100%;
+  object-fit: cover; /* This will ensure the captured full-screen image fits perfectly */
   display: block;
-  height: auto;
 }
 
 .carousel-dots {
@@ -219,7 +238,7 @@ onUnmounted(() => {
   position: absolute;
   top: 15px;
   right: 15px;
-  color: white;
+  color: black;
   width: 30px;
   height: 30px;
   display: flex;

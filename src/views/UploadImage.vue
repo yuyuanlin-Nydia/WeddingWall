@@ -10,9 +10,6 @@ const uiStore = useUiStore()
 const isNameDialogOpen = ref(false)
 const uploaderName = ref('')
 
-onMounted(() => {
-  console.log(localStorage.getItem('test'))
-})
 interface TextElement {
   id: number
   content: string
@@ -22,6 +19,22 @@ interface TextElement {
   y: number
   maxWidth: number
 }
+
+interface ImageBackground {
+  type: 'image'
+  value: string
+  label: string
+}
+
+interface GradientBackground {
+  type: 'gradient'
+  value: { start: string; mid: string; end: string }
+  angle: number
+  label: string
+  css: string
+}
+
+type BackgroundOption = ImageBackground | GradientBackground
 
 const imagePreview = ref<string | undefined>(undefined)
 const imgElement = ref<null | HTMLImageElement>(null)
@@ -35,6 +48,11 @@ const isEditingText = ref<boolean>(false)
 const MAX_DISPLAY_WIDTH = document.getElementById('app')?.getBoundingClientRect().width ?? 375
 const MAX_DISPLAY_HEIGHT = window.innerHeight - 140
 const editObj = {
+  bg: {
+    key: 'bg',
+    name: '背景',
+    icon: 'mdi-image-filter-hdr',
+  },
   rotate: {
     key: 'rotate',
     name: '旋轉',
@@ -51,10 +69,49 @@ const editObj = {
     icon: 'mdi-crop',
   },
 }
-const currentEdit = ref<null | string>(editObj.rotate.key)
+const currentEdit = ref<null | string>(editObj.bg.key)
 
 // isCropping is now a computed property derived from currentEdit.
 const isCropping = computed(() => currentEdit.value === editObj.cut.key)
+const backgroundOptions: BackgroundOption[] = [
+  {
+    type: 'image',
+    value: new URL('@/assets/image/uploadBg.jpg', import.meta.url).href,
+    label: '中式桌球',
+  },
+  {
+    type: 'gradient',
+    value: { start: '#f6e0e3', mid: '#f4c0af', end: '#f6e0e3' },
+    angle: 180,
+    label: '粉色',
+    css: 'linear-gradient(180deg, #f6e0e3 0%, #f4c0af 50%, #f6e0e3 100%)',
+  },
+  {
+    type: 'image',
+    value: new URL('@/assets/image/memoryWallBg.jpg', import.meta.url).href,
+    label: '粉色晚禮服',
+  },
+  {
+    type: 'gradient',
+    value: { start: '#bf953f', mid: '#fcf6ba', end: '#b38728' },
+    angle: 90,
+    label: '金色',
+    css: 'linear-gradient(90deg, #bf953f 0%, #fcf6ba 50%, #b38728 100%)',
+  },
+  {
+    type: 'gradient',
+    value: { start: '#fa8080', mid: '#d32f2f', end: '#b71c1c' },
+    angle: 180,
+    label: '紅色',
+    css: 'linear-gradient(180deg, #fa8080 0%, #d32f2f 50%, #b71c1c 100%)',
+  },
+  {
+    type: 'image',
+    value: new URL('@/assets/image/indexBg.jpg', import.meta.url).href,
+    label: '白色魚尾',
+  },
+]
+const selectedBg = ref<BackgroundOption>(backgroundOptions[0])
 
 const router = useRouter()
 
@@ -237,13 +294,137 @@ function rotateImg() {
   ctx.restore()
   drawAllTextElements()
 }
-function downloadImage() {
+async function downloadImage() {
   const canvas = imgCanvasRef.value
-  if (canvas) {
+
+  if (!canvas) return
+
+  // Save current state to restore later
+  const previousActiveId = activeTextElementId.value
+  const previousIsEditing = isEditingText.value
+
+  // Ensure all text elements are drawn to the canvas before capturing
+  activeTextElementId.value = null
+  isEditingText.value = false
+  drawCanvas()
+
+  try {
+    const editorPage = document.querySelector('.image-edit-page')
+    if (!editorPage) throw new Error('Editor page not found')
+
+    const rect = editorPage.getBoundingClientRect()
+    const finalCanvas = document.createElement('canvas')
+    finalCanvas.width = rect.width
+    finalCanvas.height = rect.height
+    const finalCtx = finalCanvas.getContext('2d')
+    if (!finalCtx) throw new Error('Failed to create final canvas context')
+
+    // 1. Draw background (gradient or image)
+    const bg = selectedBg.value
+    if (bg.type === 'gradient') {
+      finalCtx.globalAlpha = 1.0 // Gradient is opaque
+      const { x0, y0, x1, y1 } = getGradientCoords(
+        bg.angle || 180,
+        finalCanvas.width,
+        finalCanvas.height,
+      )
+      const gradient = finalCtx.createLinearGradient(x0, y0, x1, y1)
+      gradient.addColorStop(0, bg.value.start)
+      gradient.addColorStop(0.5, bg.value.mid)
+      gradient.addColorStop(1, bg.value.end)
+      finalCtx.fillStyle = gradient
+      finalCtx.fillRect(0, 0, finalCanvas.width, finalCanvas.height)
+    } else {
+      finalCtx.globalAlpha = 0.3 // Only image background is faded
+      // Draw repeating pattern (small tile like Purikura)
+      const bgImg = new Image()
+      bgImg.src = bg.value
+      await new Promise((resolve, reject) => {
+        bgImg.onload = resolve
+        bgImg.onerror = reject
+      })
+
+      // Create a small temporary canvas to hold the tile
+      const tileSize = 100
+      const tileCanvas = document.createElement('canvas')
+      tileCanvas.width = tileSize
+      tileCanvas.height = tileSize
+      const tileCtx = tileCanvas.getContext('2d')
+      if (tileCtx) {
+        // Draw the image onto the small tile (center crop)
+        const imgRatio = bgImg.width / bgImg.height
+        let drawWidth, drawHeight, offsetX, offsetY
+        if (imgRatio > 1) {
+          drawHeight = tileSize
+          drawWidth = drawHeight * imgRatio
+          offsetX = (tileSize - drawWidth) / 2
+          offsetY = 0
+        } else {
+          drawWidth = tileSize
+          drawHeight = drawWidth / imgRatio
+          offsetX = 0
+          offsetY = (tileSize - drawHeight) / 2
+        }
+        tileCtx.drawImage(bgImg, offsetX, offsetY, drawWidth, drawHeight)
+
+        const pattern = finalCtx.createPattern(tileCanvas, 'repeat')
+        if (pattern) {
+          finalCtx.fillStyle = pattern
+          finalCtx.fillRect(0, 0, finalCanvas.width, finalCanvas.height)
+        }
+      }
+    }
+    finalCtx.globalAlpha = 1.0 // Reset opacity for subsequent drawing
+
+    // 2. Draw the image canvas at its correct position
+    const canvasRect = canvas.getBoundingClientRect()
+    const offsetX = canvasRect.left - rect.left
+    const offsetY = canvasRect.top - rect.top
+    finalCtx.drawImage(canvas, offsetX, offsetY)
+
+    // Convert canvas to Blob for better compatibility and sharing
+    const blob = await new Promise<Blob | null>((resolve) =>
+      finalCanvas.toBlob(resolve, 'image/png'),
+    )
+    if (!blob) throw new Error('Failed to create image blob')
+
+    // 優先嘗試使用 Web Share API (手機端體驗最好)
+    if (navigator.share && navigator.canShare) {
+      const file = new File([blob], 'custom-image.png', { type: 'image/png' })
+      if (navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({
+            files: [file],
+            title: '儲存圖片',
+            text: '這是您編輯後的圖片',
+          })
+          uiStore.showSnackbar({
+            text: '下載成功',
+            type: 'success',
+            icon: 'mdi-check',
+          })
+          return // 分享成功（使用者可在此選擇「儲存影像」）
+        } catch (shareError) {
+          // 如果使用者取消分享或發生錯誤，則降級使用一般下載
+          console.log('Share failed or cancelled', shareError)
+        }
+      }
+    }
+
+    // 後備方案：傳統下載連結
+    const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
-    link.download = 'edited-image.png'
-    link.href = canvas.toDataURL('image/png')
+    link.download = 'custom-image.png'
+    link.href = url
     link.click()
+    URL.revokeObjectURL(url)
+  } catch (error) {
+    console.error('Download failed:', error)
+  } finally {
+    // Restore state
+    activeTextElementId.value = previousActiveId
+    isEditingText.value = previousIsEditing
+    drawCanvas()
   }
 }
 
@@ -514,19 +695,108 @@ async function handleNameConfirm(name: string) {
   await uploadImage()
 }
 
+function getGradientCoords(angle: number, width: number, height: number) {
+  const angleRad = (angle * Math.PI) / 180
+  const x0 = width / 2 - (Math.sin(angleRad) * width) / 2
+  const y0 = height / 2 + (Math.cos(angleRad) * height) / 2
+  const x1 = width / 2 + (Math.sin(angleRad) * width) / 2
+  const y1 = height / 2 - (Math.cos(angleRad) * height) / 2
+  return { x0, y0, x1, y1 }
+}
+
 async function uploadImage() {
   const canvas = imgCanvasRef.value
   if (!canvas) return
+
+  // Save current state to restore later if needed
+  const previousActiveId = activeTextElementId.value
+  const previousIsEditing = isEditingText.value
+
+  // Ensure all text elements are drawn to the canvas before capturing
+  activeTextElementId.value = null
+  isEditingText.value = false
+  drawCanvas()
+
   const cloudName = 'dkpitcfi9'
   const uploadPreset = 'wedding_'
   uiStore.showLoader()
   try {
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
+    // Get the editor container to capture the whole area
+    const editorPage = document.querySelector('.image-edit-page')
+    if (!editorPage) throw new Error('Editor page not found')
+
+    const finalCanvas = document.createElement('canvas')
+    finalCanvas.width = window.innerWidth
+    finalCanvas.height = window.innerHeight
+    const finalCtx = finalCanvas.getContext('2d')
+    if (!finalCtx) throw new Error('Failed to create final canvas context')
+
+    // 1. Draw background (gradient or image)
+    const bg = selectedBg.value
+    if (bg.type === 'gradient') {
+      finalCtx.globalAlpha = 1.0 // Gradient is opaque
+      const { x0, y0, x1, y1 } = getGradientCoords(
+        bg.angle || 180,
+        finalCanvas.width,
+        finalCanvas.height,
+      )
+      const gradient = finalCtx.createLinearGradient(x0, y0, x1, y1)
+      gradient.addColorStop(0, bg.value.start)
+      gradient.addColorStop(0.5, bg.value.mid)
+      gradient.addColorStop(1, bg.value.end)
+      finalCtx.fillStyle = gradient
+      finalCtx.fillRect(0, 0, finalCanvas.width, finalCanvas.height)
+    } else {
+      finalCtx.globalAlpha = 0.3 // Only image background is faded
+      // ... (existing tiling logic)
+      const bgImg = new Image()
+      bgImg.src = bg.value
+      await new Promise((resolve, reject) => {
+        bgImg.onload = resolve
+        bgImg.onerror = reject
+      })
+
+      const tileSize = 100
+      const tileCanvas = document.createElement('canvas')
+      tileCanvas.width = tileSize
+      tileCanvas.height = tileSize
+      const tileCtx = tileCanvas.getContext('2d')
+      if (tileCtx) {
+        const imgRatio = bgImg.width / bgImg.height
+        let drawWidth, drawHeight, offsetX, offsetY
+        if (imgRatio > 1) {
+          drawHeight = tileSize
+          drawWidth = drawHeight * imgRatio
+          offsetX = (tileSize - drawWidth) / 2
+          offsetY = 0
+        } else {
+          drawWidth = tileSize
+          drawHeight = drawWidth / imgRatio
+          offsetX = 0
+          offsetY = (tileSize - drawHeight) / 2
+        }
+        tileCtx.drawImage(bgImg, offsetX, offsetY, drawWidth, drawHeight)
+        const pattern = finalCtx.createPattern(tileCanvas, 'repeat')
+        if (pattern) {
+          finalCtx.fillStyle = pattern
+          finalCtx.fillRect(0, 0, finalCanvas.width, finalCanvas.height)
+        }
+      }
+    }
+    finalCtx.globalAlpha = 1.0 // Reset opacity for main content
+
+    // 2. Draw the image canvas at its correct viewport position
+    const canvasRect = canvas.getBoundingClientRect()
+    finalCtx.drawImage(canvas, canvasRect.left, canvasRect.top)
+
+    const blob = await new Promise<Blob | null>((resolve) =>
+      finalCanvas.toBlob(resolve, 'image/png'),
+    )
     if (!blob) {
       throw new Error('Failed to get blob from canvas')
     }
     const formData = new FormData()
-    formData.append('file', blob, 'edited-image.png')
+    formData.append('file', blob, 'custom-image.png')
     formData.append('upload_preset', uploadPreset)
     formData.append('tags', 'engagement')
 
@@ -556,6 +826,10 @@ async function uploadImage() {
       type: 'error',
       icon: 'mdi-alert-circle-outline',
     })
+    // Restore state on error so user can continue editing
+    activeTextElementId.value = previousActiveId
+    isEditingText.value = previousIsEditing
+    drawCanvas()
   } finally {
     uiStore.hideLoader()
   }
@@ -564,6 +838,22 @@ async function uploadImage() {
 
 <template>
   <div class="image-edit-page relative">
+    <!-- Dynamic Background Layer (Tiled & Faded) -->
+    <div
+      v-if="imagePreview"
+      class="absolute inset-0 z-0 pointer-events-none"
+      :style="
+        selectedBg.type === 'gradient'
+          ? { background: selectedBg.css }
+          : {
+              backgroundImage: `url(${selectedBg.value})`,
+              backgroundRepeat: 'repeat',
+              backgroundPosition: 'top left',
+              backgroundSize: '100px',
+              opacity: 0.3,
+            }
+      "
+    />
     <div class="flex justify-between absolute top-1 left-0 z-2 gap-2 ml-2" v-if="imagePreview">
       <button
         class="bg-gray-100 text-gray-500 rounded-full w-8 h-8 flex items-center justify-center cursor-pointer left-2"
@@ -658,6 +948,25 @@ async function uploadImage() {
           </div>
         </div>
         <div class="absolute bottom-[5px] z-2 w-full flex justify-center">
+          <!-- Background Selector -->
+          <div v-if="currentEdit === editObj.bg.key" class="flex gap-2 p-2 bg-black/30 rounded-lg">
+            <button
+              v-for="bg in backgroundOptions"
+              :key="bg.label"
+              class="w-10 h-10 rounded-full border-2 transition-all flex items-center justify-center overflow-hidden"
+              :style="
+                bg.type === 'gradient'
+                  ? { background: bg.css }
+                  : { backgroundImage: `url(${bg.value})`, backgroundSize: 'cover' }
+              "
+              :class="selectedBg.label === bg.label ? 'border-amber-400 scale-110' : 'border-white'"
+              @click="selectedBg = bg"
+            >
+              <span v-if="bg.type === 'gradient'" class="text-[8px] text-gray-100 font-bold">{{
+                bg.label
+              }}</span>
+            </button>
+          </div>
           <div v-if="currentEdit === editObj.rotate.key">
             <div>
               <input
@@ -777,11 +1086,10 @@ async function uploadImage() {
 <style scoped>
 .image-edit-page {
   padding: 0px;
-  background-color: rgb(246, 224, 227);
 }
 .image-edit-bg {
   opacity: 0.8;
-  background: url('../assets/image/uploadBg.jpg') no-repeat center center / 120% auto;
+  background: url('../assets/image/uploadBg.jpg') no-repeat center center / 135% auto;
 }
 .slider-container {
   display: flex;

@@ -67,14 +67,12 @@ const handleConfirm = () => {
       </div>
 
       <div class="flex justify-end gap-3">
-        <BaseButton
-          class="border-gray-400 text-gray-400 hover:bg-gray-500 active:bg-gray-500"
-          @click="handleCancel"
-        >
+        <BaseButton class="border-gray-400 text-gray-500 hover:bg-gray-100" @click="handleCancel">
           取消
         </BaseButton>
         <BaseButton
-          class="border-blue-100 text-blue-100 hover:bg-blue-300 active:bg-blue-300"
+          class="border-blue-100 text-blue-700 hover:bg-blue-400 disabled:opacity-50 disabled:cursor-not-allowed"
+          :disabled="!inputValue.trim()"
           @click="handleConfirm"
         >
           確認
