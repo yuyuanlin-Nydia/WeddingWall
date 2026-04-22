@@ -47,6 +47,7 @@ const activeTextElementId = ref<number | null>(null)
 const isEditingText = ref<boolean>(false)
 const MAX_DISPLAY_WIDTH = document.getElementById('app')?.getBoundingClientRect().width ?? 375
 const MAX_DISPLAY_HEIGHT = window.innerHeight - 140
+const DISPLAY_SCALE = 1.0
 const editObj = {
   bg: {
     key: 'bg',
@@ -113,6 +114,10 @@ const backgroundOptions: BackgroundOption[] = [
 ]
 const selectedBg = ref<BackgroundOption>(backgroundOptions[0])
 
+const imgScale = ref(1)
+const imgTranslateX = ref(0)
+const imgTranslateY = ref(0)
+
 const router = useRouter()
 
 // The watcher is now simplified to only handle side-effects when leaving a mode.
@@ -163,31 +168,50 @@ function drawCanvas() {
   const img = imgElement.value
 
   if (!canvas || !img) return
-  const imgWidth = img.naturalWidth
-  const imgHeight = img.naturalHeight
 
-  let displayWidth = imgWidth
-  let displayHeight = imgHeight
+  // 固定為整個工作區尺寸 (100% 邏輯解析度)
+  const workspaceWidth = MAX_DISPLAY_WIDTH
+  const workspaceHeight = MAX_DISPLAY_HEIGHT
 
-  // Calculate scale factor to fit within max dimensions
-  if (imgWidth > MAX_DISPLAY_WIDTH || imgHeight > MAX_DISPLAY_HEIGHT) {
-    const widthRatio = MAX_DISPLAY_WIDTH / imgWidth
-    const heightRatio = MAX_DISPLAY_HEIGHT / imgHeight
-    const scaleFactor = Math.min(widthRatio, heightRatio)
+  // 處理高解析度螢幕
+  const dpr = window.devicePixelRatio || 1
+  canvas.width = workspaceWidth * dpr
+  canvas.height = workspaceHeight * dpr
+  canvas.style.width = `${workspaceWidth}px`
+  canvas.style.height = `${workspaceHeight}px`
 
-    displayWidth = imgWidth * scaleFactor
-    displayHeight = imgHeight * scaleFactor
-  }
-
-  // 設定 canvas 尺寸為圖片的原始尺寸或縮放後的尺寸
-  canvas.width = displayWidth
-  canvas.height = displayHeight
   const ctx = canvas.getContext('2d')
-  ctx!.clearRect(0, 0, canvas.width, canvas.height) // Clear before drawing
-  ctx!.drawImage(img, 0, 0, displayWidth, displayHeight)
+  if (ctx) {
+    ctxRef.value = ctx
+    ctx.scale(dpr, dpr)
+    ctx.imageSmoothingEnabled = true
+    ctx.imageSmoothingQuality = 'high'
+    ctx.clearRect(0, 0, workspaceWidth, workspaceHeight)
 
-  ctxRef.value = ctx
-  drawAllTextElements()
+    // --- 繪製圖片 ---
+    ctx.save()
+    // 將座標原點移至畫布中心並加上位移
+    ctx.translate(
+      workspaceWidth / 2 + imgTranslateX.value,
+      workspaceHeight / 2 + imgTranslateY.value,
+    )
+    // 旋轉
+    ctx.rotate((angle.value * Math.PI) / 180)
+    // 縮放
+    ctx.scale(imgScale.value, imgScale.value)
+
+    // 將圖片初始比例設為 0.7
+    const fitScale =
+      Math.min(workspaceWidth / img.naturalWidth, workspaceHeight / img.naturalHeight) * 0.7
+    const drawW = img.naturalWidth * fitScale
+    const drawH = img.naturalHeight * fitScale
+
+    // 繪製圖片（置中於目前的 translate 位置）
+    ctx.drawImage(img, -drawW / 2, -drawH / 2, drawW, drawH)
+    ctx.restore()
+
+    drawAllTextElements()
+  }
 }
 
 // 優化：使用 computed 處理當前選中的文字元素，避免在模板中使用 .find()
@@ -224,80 +248,95 @@ watch(
 
 function setCurrentEdit(edit: string) {
   currentEdit.value = edit
-  // If pen tool is selected, immediately add a new text element in the center.
-  if (edit === editObj.pen.key) {
-    if (imgCanvasRef.value) {
-      const canvas = imgCanvasRef.value
-      addNewText(canvas.width / 2, canvas.height / 2)
-    }
+  // 修正：只有在原本完全沒文字時，才自動新增第一個文字框
+  if (edit === editObj.pen.key && textElements.value.length === 0) {
+    addNewText(MAX_DISPLAY_WIDTH / 2, MAX_DISPLAY_HEIGHT / 2)
   }
 }
 
 function rotateImg() {
-  const ctx = ctxRef.value
-  const img = imgElement.value
-  const canvas = imgCanvasRef.value
-  if (!ctx || !img || !canvas) return
+  drawCanvas()
+}
+let isDraggingImage = false
+let lastMousePos = { x: 0, y: 0 }
+let initialPinchDist = 0
+let initialPinchScale = 1
+const activePointers = new Map<number, { x: number; y: number }>()
 
-  const imgWidth = img.naturalWidth
-  const imgHeight = img.naturalHeight
-  const rotationAngleRad = (angle.value * Math.PI) / 180
+function handleImagePointerDown(event: PointerEvent) {
+  // Only block movement in cropping mode or when explicitly editing a text element's content
+  if (isCropping.value || isEditingText.value) return
 
-  // Calculate new canvas dimensions to fit the rotated image's bounding box
-  const rotatedBoundingBoxWidth =
-    Math.abs(imgWidth * Math.cos(rotationAngleRad)) +
-    Math.abs(imgHeight * Math.sin(rotationAngleRad))
-  const rotatedBoundingBoxHeight =
-    Math.abs(imgWidth * Math.sin(rotationAngleRad)) +
-    Math.abs(imgHeight * Math.cos(rotationAngleRad))
-
-  let displayWidth = rotatedBoundingBoxWidth
-  let displayHeight = rotatedBoundingBoxHeight
-  let scaleFactor = 1
-
-  // Calculate scale factor to fit within max display dimensions
-  if (
-    rotatedBoundingBoxWidth > MAX_DISPLAY_WIDTH ||
-    rotatedBoundingBoxHeight > MAX_DISPLAY_HEIGHT
-  ) {
-    const widthRatio = MAX_DISPLAY_WIDTH / rotatedBoundingBoxWidth
-    const heightRatio = MAX_DISPLAY_HEIGHT / rotatedBoundingBoxHeight
-    scaleFactor = Math.min(widthRatio, heightRatio)
-
-    displayWidth = rotatedBoundingBoxWidth * scaleFactor
-    displayHeight = rotatedBoundingBoxHeight * scaleFactor
+  const target = event.currentTarget as HTMLElement
+  if (target && 'setPointerCapture' in target) {
+    target.setPointerCapture(event.pointerId)
   }
 
-  // Update canvas dimensions
-  canvas.width = displayWidth
-  canvas.height = displayHeight
+  activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY })
+  isDraggingImage = true
 
-  // Save the current canvas state
-  ctx.save()
-
-  // Translate to the center of the new canvas
-  ctx.translate(displayWidth / 2, displayHeight / 2)
-
-  // Rotate the canvas
-  ctx.rotate(rotationAngleRad)
-
-  // Draw the image centered on the new canvas origin, scaled
-  ctx.drawImage(
-    img,
-    (-imgWidth * scaleFactor) / 2,
-    (-imgHeight * scaleFactor) / 2,
-    imgWidth * scaleFactor,
-    imgHeight * scaleFactor,
-  )
-
-  // Restore the canvas state
-  ctx.restore()
-  drawAllTextElements()
+  if (activePointers.size === 1) {
+    lastMousePos = { x: event.clientX, y: event.clientY }
+  }
 }
-async function downloadImage() {
-  const canvas = imgCanvasRef.value
 
-  if (!canvas) return
+function handleImagePointerMove(event: PointerEvent) {
+  if (!isDraggingImage) return
+  activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY })
+
+  if (activePointers.size === 1) {
+    // Single finger/mouse: Pan
+    // 除以 DISPLAY_SCALE 以補償視覺縮放帶來的位移差
+    const dx = (event.clientX - lastMousePos.x) / DISPLAY_SCALE
+    const dy = (event.clientY - lastMousePos.y) / DISPLAY_SCALE
+    imgTranslateX.value += dx
+    imgTranslateY.value += dy
+    lastMousePos = { x: event.clientX, y: event.clientY }
+    drawCanvas() // 即時更新位置
+  } else if (activePointers.size === 2) {
+    // Two fingers: Pinch zoom
+    const points = Array.from(activePointers.values())
+    const dist = Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y)
+
+    if (initialPinchDist === 0) {
+      initialPinchDist = dist
+      initialPinchScale = imgScale.value
+    } else {
+      const scale = initialPinchScale * (dist / initialPinchDist)
+      imgScale.value = Math.max(0.1, Math.min(10, scale))
+      drawCanvas() // 即時更新縮放
+    }
+  }
+}
+
+function handleImagePointerUp(event: PointerEvent) {
+  activePointers.delete(event.pointerId)
+  if (activePointers.size === 0) {
+    isDraggingImage = false
+    initialPinchDist = 0
+  } else if (activePointers.size === 1) {
+    initialPinchDist = 0
+    // Reset lastMousePos to the remaining pointer's position to prevent jumping
+    const remaining = activePointers.values().next().value
+    if (remaining) {
+      lastMousePos = { x: remaining.x, y: remaining.y }
+    }
+  }
+}
+
+function handleImageWheel(event: WheelEvent) {
+  if (isCropping.value) return
+  event.preventDefault()
+  const zoomSpeed = 0.001 / DISPLAY_SCALE
+  const delta = -event.deltaY
+  const newScale = imgScale.value + delta * zoomSpeed
+  imgScale.value = Math.max(0.1, Math.min(10, newScale))
+  drawCanvas() // 即時更新滾輪縮放
+}
+
+async function generateFinalBlob(): Promise<Blob | null> {
+  const canvas = imgCanvasRef.value
+  if (!canvas) return null
 
   // Save current state to restore later
   const previousActiveId = activeTextElementId.value
@@ -335,7 +374,7 @@ async function downloadImage() {
       finalCtx.fillStyle = gradient
       finalCtx.fillRect(0, 0, finalCanvas.width, finalCanvas.height)
     } else {
-      finalCtx.globalAlpha = 0.3 // Only image background is faded
+      finalCtx.globalAlpha = 0.4 // Only image background is faded
       // Draw repeating pattern (small tile like Purikura)
       const bgImg = new Image()
       bgImg.src = bg.value
@@ -376,17 +415,31 @@ async function downloadImage() {
     }
     finalCtx.globalAlpha = 1.0 // Reset opacity for subsequent drawing
 
-    // 2. Draw the image canvas at its correct position
+    // 2. Draw the image canvas at its correct position and scale
     const canvasRect = canvas.getBoundingClientRect()
-    const offsetX = canvasRect.left - rect.left
-    const offsetY = canvasRect.top - rect.top
-    finalCtx.drawImage(canvas, offsetX, offsetY)
-
-    // Convert canvas to Blob for better compatibility and sharing
-    const blob = await new Promise<Blob | null>((resolve) =>
-      finalCanvas.toBlob(resolve, 'image/png'),
+    const offsetX = (canvasRect.left - rect.left) / DISPLAY_SCALE
+    const offsetY = (canvasRect.top - rect.top) / DISPLAY_SCALE
+    finalCtx.drawImage(
+      canvas,
+      offsetX,
+      offsetY,
+      canvasRect.width / DISPLAY_SCALE,
+      canvasRect.height / DISPLAY_SCALE,
     )
-    if (!blob) throw new Error('Failed to create image blob')
+
+    return new Promise<Blob | null>((resolve) => finalCanvas.toBlob(resolve, 'image/png'))
+  } finally {
+    // Restore state
+    activeTextElementId.value = previousActiveId
+    isEditingText.value = previousIsEditing
+    drawCanvas()
+  }
+}
+
+async function downloadImage() {
+  try {
+    const blob = await generateFinalBlob()
+    if (!blob) return
 
     // 優先嘗試使用 Web Share API (手機端體驗最好)
     if (navigator.share && navigator.canShare) {
@@ -420,11 +473,6 @@ async function downloadImage() {
     URL.revokeObjectURL(url)
   } catch (error) {
     console.error('Download failed:', error)
-  } finally {
-    // Restore state
-    activeTextElementId.value = previousActiveId
-    isEditingText.value = previousIsEditing
-    drawCanvas()
   }
 }
 
@@ -523,8 +571,9 @@ function handleCanvasClick(event: MouseEvent) {
   if (!ctx) return
 
   const rect = canvas.getBoundingClientRect()
-  const clickX = event.clientX - rect.left
-  const clickY = event.clientY - rect.top
+  // 座標轉換：Canvas 是 1:1 顯示的
+  const clickX = (event.clientX - rect.left) / DISPLAY_SCALE
+  const clickY = (event.clientY - rect.top) / DISPLAY_SCALE
 
   // Iterate backwards to check topmost text first
   for (let i = textElements.value.length - 1; i >= 0; i--) {
@@ -549,7 +598,6 @@ function handleCanvasClick(event: MouseEvent) {
       }
     }
     maxWidthSeen = Math.max(maxWidthSeen, ctx.measureText(line).width)
-    const totalHeight = lineCount * textEl.size * 1.2
 
     // Bounding box check (修正為右對齊的多行區域)
     const isXMatch = clickX >= textEl.x - maxWidthSeen && clickX <= textEl.x
@@ -574,49 +622,23 @@ function handleCanvasClick(event: MouseEvent) {
   }
 }
 
-function handleBlur(event: FocusEvent) {
-  const relatedTarget = event.relatedTarget as HTMLElement | null
-
-  if (relatedTarget && (relatedTarget.id === 'textColor' || relatedTarget.id === 'textSize')) {
-    return
-  }
-  isEditingText.value = false
-  activeTextElementId.value = null
-  drawCanvas()
-}
-
-function updateTextContent(id: number, value: string) {
-  const textEl = textElements.value.find((el) => el.id === id)
-  if (textEl) {
-    textEl.content = value
-    drawCanvas() // 重繪以確保資料同步（雖然編輯時該元素被隱藏）
-  }
-}
-
 function onTextInput(id: number, event: Event) {
   const target = event.target as HTMLTextAreaElement
-  updateTextContent(id, target.value)
+  // Removed updateTextContent(id, target.value) to allow v-model to handle IME correctly
   adjustTextareaHeight(target)
-}
-
-function updateTextColor(id: number, event: Event) {
-  const target = event.target as HTMLInputElement
-  const textEl = textElements.value.find((el) => el.id === id)
-  if (textEl) {
-    textEl.color = target.value
-  }
-}
-
-function updateTextSize(id: number, event: Event) {
-  const target = event.target as HTMLInputElement
-  const textEl = textElements.value.find((el) => el.id === id)
-  if (textEl) {
-    textEl.size = parseInt(target.value)
-  }
+  drawCanvas() // This will now use the committed value from v-model
 }
 
 function selectTextElement(id: number) {
   activeTextElementId.value = id
+  isEditingText.value = true
+  nextTick(() => {
+    const input = document.getElementById(`text-input-${id}`) as HTMLTextAreaElement
+    if (input) {
+      input.focus()
+      adjustTextareaHeight(input)
+    }
+  })
 }
 
 let isDraggingText = false
@@ -630,24 +652,27 @@ function handleTextMouseDown(event: MouseEvent | TouchEvent, textEl: TextElement
     const canvas = imgCanvasRef.value
     if (canvas) {
       const rect = canvas.getBoundingClientRect()
-      const clientX = 'touches' in event ? event.touches[0].clientX : event.clientX
-      const clientY = 'touches' in event ? event.touches[0].clientY : event.clientY
-      dragOffsetX = clientX - rect.left - textEl.x
-      dragOffsetY = clientY - rect.top - textEl.y
+      const clientX = 'touches' in event ? event.touches[0].clientX : (event as MouseEvent).clientX
+      const clientY = 'touches' in event ? event.touches[0].clientY : (event as MouseEvent).clientY
+
+      // 調整座標映射，考慮 DISPLAY_SCALE
+      dragOffsetX = (clientX - rect.left) / DISPLAY_SCALE - textEl.x
+      dragOffsetY = (clientY - rect.top) / DISPLAY_SCALE - textEl.y
     }
-    event.stopPropagation()
   }
 }
 
 function handleGlobalMove(event: MouseEvent | TouchEvent) {
   if (isDraggingText && activeTextElementId.value !== null && imgCanvasRef.value) {
+    if (event.cancelable) event.preventDefault()
     const canvas = imgCanvasRef.value
     const rect = canvas.getBoundingClientRect()
-    const clientX = 'touches' in event ? event.touches[0].clientX : event.clientX
-    const clientY = 'touches' in event ? event.touches[0].clientY : event.clientY
+    const clientX = 'touches' in event ? event.touches[0].clientX : (event as MouseEvent).clientX
+    const clientY = 'touches' in event ? event.touches[0].clientY : (event as MouseEvent).clientY
 
-    const mouseX = clientX - rect.left - dragOffsetX
-    const mouseY = clientY - rect.top - dragOffsetY
+    // 調整移動量，考慮 DISPLAY_SCALE (此時為 1.0)
+    const mouseX = (clientX - rect.left) / DISPLAY_SCALE - dragOffsetX
+    const mouseY = (clientY - rect.top) / DISPLAY_SCALE - dragOffsetY
 
     const activeText = textElements.value.find((el) => el.id === activeTextElementId.value)
     if (activeText) {
@@ -680,6 +705,7 @@ function finishTextEdit() {
   isEditingText.value = false
   activeTextElementId.value = null
   drawCanvas()
+  currentEdit.value = null
 }
 function reset() {
   imagePreview.value = undefined
@@ -705,98 +731,15 @@ function getGradientCoords(angle: number, width: number, height: number) {
 }
 
 async function uploadImage() {
-  const canvas = imgCanvasRef.value
-  if (!canvas) return
-
-  // Save current state to restore later if needed
-  const previousActiveId = activeTextElementId.value
-  const previousIsEditing = isEditingText.value
-
-  // Ensure all text elements are drawn to the canvas before capturing
-  activeTextElementId.value = null
-  isEditingText.value = false
-  drawCanvas()
-
   const cloudName = 'dkpitcfi9'
   const uploadPreset = 'wedding_'
   uiStore.showLoader()
   try {
-    // Get the editor container to capture the whole area
-    const editorPage = document.querySelector('.image-edit-page')
-    if (!editorPage) throw new Error('Editor page not found')
+    const blob = await generateFinalBlob()
+    if (!blob) return
 
-    const finalCanvas = document.createElement('canvas')
-    finalCanvas.width = window.innerWidth
-    finalCanvas.height = window.innerHeight
-    const finalCtx = finalCanvas.getContext('2d')
-    if (!finalCtx) throw new Error('Failed to create final canvas context')
-
-    // 1. Draw background (gradient or image)
-    const bg = selectedBg.value
-    if (bg.type === 'gradient') {
-      finalCtx.globalAlpha = 1.0 // Gradient is opaque
-      const { x0, y0, x1, y1 } = getGradientCoords(
-        bg.angle || 180,
-        finalCanvas.width,
-        finalCanvas.height,
-      )
-      const gradient = finalCtx.createLinearGradient(x0, y0, x1, y1)
-      gradient.addColorStop(0, bg.value.start)
-      gradient.addColorStop(0.5, bg.value.mid)
-      gradient.addColorStop(1, bg.value.end)
-      finalCtx.fillStyle = gradient
-      finalCtx.fillRect(0, 0, finalCanvas.width, finalCanvas.height)
-    } else {
-      finalCtx.globalAlpha = 0.3 // Only image background is faded
-      // ... (existing tiling logic)
-      const bgImg = new Image()
-      bgImg.src = bg.value
-      await new Promise((resolve, reject) => {
-        bgImg.onload = resolve
-        bgImg.onerror = reject
-      })
-
-      const tileSize = 100
-      const tileCanvas = document.createElement('canvas')
-      tileCanvas.width = tileSize
-      tileCanvas.height = tileSize
-      const tileCtx = tileCanvas.getContext('2d')
-      if (tileCtx) {
-        const imgRatio = bgImg.width / bgImg.height
-        let drawWidth, drawHeight, offsetX, offsetY
-        if (imgRatio > 1) {
-          drawHeight = tileSize
-          drawWidth = drawHeight * imgRatio
-          offsetX = (tileSize - drawWidth) / 2
-          offsetY = 0
-        } else {
-          drawWidth = tileSize
-          drawHeight = drawWidth / imgRatio
-          offsetX = 0
-          offsetY = (tileSize - drawHeight) / 2
-        }
-        tileCtx.drawImage(bgImg, offsetX, offsetY, drawWidth, drawHeight)
-        const pattern = finalCtx.createPattern(tileCanvas, 'repeat')
-        if (pattern) {
-          finalCtx.fillStyle = pattern
-          finalCtx.fillRect(0, 0, finalCanvas.width, finalCanvas.height)
-        }
-      }
-    }
-    finalCtx.globalAlpha = 1.0 // Reset opacity for main content
-
-    // 2. Draw the image canvas at its correct viewport position
-    const canvasRect = canvas.getBoundingClientRect()
-    finalCtx.drawImage(canvas, canvasRect.left, canvasRect.top)
-
-    const blob = await new Promise<Blob | null>((resolve) =>
-      finalCanvas.toBlob(resolve, 'image/png'),
-    )
-    if (!blob) {
-      throw new Error('Failed to get blob from canvas')
-    }
     const formData = new FormData()
-    formData.append('file', blob, 'custom-image.png')
+    formData.append('file', blob, `engagement_${Date.now()}.png`)
     formData.append('upload_preset', uploadPreset)
     formData.append('tags', 'engagement')
 
@@ -826,10 +769,6 @@ async function uploadImage() {
       type: 'error',
       icon: 'mdi-alert-circle-outline',
     })
-    // Restore state on error so user can continue editing
-    activeTextElementId.value = previousActiveId
-    isEditingText.value = previousIsEditing
-    drawCanvas()
   } finally {
     uiStore.hideLoader()
   }
@@ -850,7 +789,7 @@ async function uploadImage() {
               backgroundRepeat: 'repeat',
               backgroundPosition: 'top left',
               backgroundSize: '100px',
-              opacity: 0.3,
+              opacity: 0.4,
             }
       "
     />
@@ -883,21 +822,32 @@ async function uploadImage() {
               max="100"
             />
           </div>
-          <div class="relative">
+          <div
+            class="relative overflow-visible"
+            :style="{
+              cursor: currentEdit === editObj.pen.key || isCropping ? 'default' : 'move',
+              touchAction: 'none',
+              width: `${MAX_DISPLAY_WIDTH}px`,
+              height: `${MAX_DISPLAY_HEIGHT}px`,
+            }"
+            @pointerdown="handleImagePointerDown"
+            @pointermove="handleImagePointerMove"
+            @pointerup="handleImagePointerUp"
+            @pointercancel="handleImagePointerUp"
+            @wheel="handleImageWheel"
+          >
             <canvas
               ref="imgCanvasRef"
               id="imageCanvas"
               v-show="imagePreview && !isCropping"
               @click="handleCanvasClick"
+              style="position: absolute; top: 0; left: 0"
             />
-            <!-- @mousedown="handleCanvasMouseDown"
-            @mousemove="handleCanvasMouseMove"
-            @mouseup="handleCanvasMouseUp" -->
             <Cropper
               ref="cropperRef"
               :src="imagePreview"
               v-if="isCropping"
-              style="width: 330px; height: auto"
+              :style="{ width: `${MAX_DISPLAY_WIDTH}px`, height: 'auto' }"
             />
 
             <template v-if="currentEdit === editObj.pen.key">
@@ -913,12 +863,25 @@ async function uploadImage() {
                   top: `${textEl.y - textEl.size}px`,
                   transform: 'translateX(-100%)',
                   touchAction: 'none',
+                  minWidth: '50px',
+                  minHeight: '20px',
+                  cursor: 'move',
+                  zIndex: activeTextElementId === textEl.id ? 10 : 5,
                 }"
               >
+                <!-- Invisible hit area when not editing to allow re-selection/dragging -->
+                <div
+                  v-if="activeTextElementId !== textEl.id"
+                  :style="{
+                    width: `${textEl.maxWidth}px`,
+                    height: `${textEl.size * 1.2}px`,
+                    background: 'transparent',
+                  }"
+                ></div>
                 <textarea
                   v-if="activeTextElementId === textEl.id"
                   :id="`text-input-${textEl.id}`"
-                  :value="textEl.content"
+                  v-model="textEl.content"
                   :style="{
                     fontSize: `${textEl.size}px`,
                     lineHeight: 1.2,
@@ -941,7 +904,6 @@ async function uploadImage() {
                   rows="1"
                   @input="onTextInput(textEl.id, $event)"
                   @focus="((isEditingText = true), drawCanvas())"
-                  @blur="handleBlur($event)"
                 ></textarea>
               </div>
             </template>
@@ -1017,6 +979,7 @@ async function uploadImage() {
                 <input type="color" v-model="activeTextElement.color" id="textColor" />
                 <button
                   @click="finishTextEdit"
+                  id="finishTextEdit"
                   class="text-gray-700 bg-amber-300 px-2 py-1 rounded ml-auto cursor-pointer"
                 >
                   完成
