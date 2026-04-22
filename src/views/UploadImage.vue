@@ -341,7 +341,7 @@ async function generateFinalBlob(): Promise<Blob | null> {
 
   // 提高輸出解析度倍率 (例如 3 倍，讓 375px 寬變成 1125px)
   const OUTPUT_SCALE = 3
-  
+
   // Save current state to restore later
   const previousActiveId = activeTextElementId.value
   const previousIsEditing = isEditingText.value
@@ -357,18 +357,18 @@ async function generateFinalBlob(): Promise<Blob | null> {
 
     const rect = editorPage.getBoundingClientRect()
     const finalCanvas = document.createElement('canvas')
-    
+
     // 使用倍率後的尺寸
     finalCanvas.width = rect.width * OUTPUT_SCALE
     finalCanvas.height = rect.height * OUTPUT_SCALE
-    
+
     const finalCtx = finalCanvas.getContext('2d')
     if (!finalCtx) throw new Error('Failed to create final canvas context')
 
     // 設定高品質縮放
     finalCtx.imageSmoothingEnabled = true
     finalCtx.imageSmoothingQuality = 'high'
-    
+
     // 整體縮放以適應高解析度
     finalCtx.scale(OUTPUT_SCALE, OUTPUT_SCALE)
 
@@ -376,11 +376,7 @@ async function generateFinalBlob(): Promise<Blob | null> {
     const bg = selectedBg.value
     if (bg.type === 'gradient') {
       finalCtx.globalAlpha = 1.0
-      const { x0, y0, x1, y1 } = getGradientCoords(
-        bg.angle || 180,
-        rect.width,
-        rect.height,
-      )
+      const { x0, y0, x1, y1 } = getGradientCoords(bg.angle || 180, rect.width, rect.height)
       const gradient = finalCtx.createLinearGradient(x0, y0, x1, y1)
       gradient.addColorStop(0, bg.value.start)
       gradient.addColorStop(0.5, bg.value.mid)
@@ -421,7 +417,7 @@ async function generateFinalBlob(): Promise<Blob | null> {
         const pattern = finalCtx.createPattern(tileCanvas, 'repeat')
         if (pattern) {
           // 修正 Pattern 縮放
-          pattern.setTransform(new DOMMatrix().scale(1/OUTPUT_SCALE, 1/OUTPUT_SCALE))
+          pattern.setTransform(new DOMMatrix().scale(1 / OUTPUT_SCALE, 1 / OUTPUT_SCALE))
           finalCtx.fillStyle = pattern
           finalCtx.fillRect(0, 0, rect.width, rect.height)
         }
@@ -433,7 +429,7 @@ async function generateFinalBlob(): Promise<Blob | null> {
     const canvasRect = canvas.getBoundingClientRect()
     const offsetX = (canvasRect.left - rect.left) / DISPLAY_SCALE
     const offsetY = (canvasRect.top - rect.top) / DISPLAY_SCALE
-    
+
     finalCtx.drawImage(
       canvas,
       offsetX,
@@ -451,7 +447,7 @@ async function generateFinalBlob(): Promise<Blob | null> {
   }
 }
 
-async function downloadImage() {
+async function shareImage() {
   try {
     const blob = await generateFinalBlob()
     if (!blob) return
@@ -467,7 +463,7 @@ async function downloadImage() {
             text: '這是您編輯後的圖片',
           })
           uiStore.showSnackbar({
-            text: '下載成功',
+            text: '分享成功',
             type: 'success',
             icon: 'mdi-check',
           })
@@ -480,14 +476,14 @@ async function downloadImage() {
     }
 
     // 後備方案：傳統下載連結
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.download = 'custom-image.png'
-    link.href = url
-    link.click()
-    URL.revokeObjectURL(url)
+    // const url = URL.createObjectURL(blob)
+    // const link = document.createElement('a')
+    // link.download = 'custom-image.png'
+    // link.href = url
+    // link.click()
+    // URL.revokeObjectURL(url)
   } catch (error) {
-    console.error('Download failed:', error)
+    console.error('Share failed:', error)
   }
 }
 
@@ -1029,9 +1025,9 @@ async function uploadImage() {
           </div>
           <div
             class="bg-amber-100 text-gray-500 size-8 rounded-full cursor-pointer hover:rounded-full hover:bg-gray-300 flex justify-center items-center right-5"
-            @click="downloadImage"
+            @click="shareImage"
           >
-            <i class="mdi mdi-download text-2xl"></i>
+            <i class="mdi mdi-share text-2xl"></i>
           </div>
         </div>
       </template>
