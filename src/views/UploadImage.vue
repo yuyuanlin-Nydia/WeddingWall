@@ -226,8 +226,9 @@ const activeTextElement = computed({
 })
 
 function adjustTextareaHeight(el: HTMLTextAreaElement) {
-  el.style.height = 'auto'
+  el.style.height = '0px'
   el.style.height = el.scrollHeight + 'px'
+  el.scrollTop = 0 // 確保不產生內部捲動
 }
 
 watch(
@@ -515,7 +516,7 @@ function drawAllTextElements() {
     }
     ctx.font = `${textEl.size}px Arial`
     ctx.fillStyle = textEl.color
-    ctx.textAlign = 'right'
+    ctx.textAlign = 'center'
 
     const words = textEl.content.split('')
     let line = ''
@@ -540,6 +541,8 @@ function drawAllTextElements() {
 }
 
 function addNewText(x: number, y: number) {
+  // 置中對齊時，最大寬度受限於距離邊界最近的那一側，乘以二
+  const distToEdge = Math.min(x, MAX_DISPLAY_WIDTH - x)
   const newText: TextElement = {
     id: Date.now(),
     content: '',
@@ -547,7 +550,7 @@ function addNewText(x: number, y: number) {
     size: 20,
     x: x,
     y: y,
-    maxWidth: x - 10, // 修正：文字向左長，最大寬度就是 x 到邊緣的距離（保留 10px 邊界）
+    maxWidth: Math.max(100, distToEdge * 2 - 20),
   }
   textElements.value.push(newText)
   activeTextElementId.value = newText.id
@@ -599,8 +602,8 @@ function handleCanvasClick(event: MouseEvent) {
     }
     maxWidthSeen = Math.max(maxWidthSeen, ctx.measureText(line).width)
 
-    // Bounding box check (修正為右對齊的多行區域)
-    const isXMatch = clickX >= textEl.x - maxWidthSeen && clickX <= textEl.x
+    // Bounding box check (修正為置中對齊的區域)
+    const isXMatch = clickX >= textEl.x - maxWidthSeen / 2 && clickX <= textEl.x + maxWidthSeen / 2
     const isYMatch =
       clickY >= textEl.y - textEl.size && clickY <= textEl.y + (lineCount - 1) * textEl.size * 1.2
 
@@ -624,9 +627,7 @@ function handleCanvasClick(event: MouseEvent) {
 
 function onTextInput(id: number, event: Event) {
   const target = event.target as HTMLTextAreaElement
-  // Removed updateTextContent(id, target.value) to allow v-model to handle IME correctly
   adjustTextareaHeight(target)
-  drawCanvas() // This will now use the committed value from v-model
 }
 
 function selectTextElement(id: number) {
@@ -659,6 +660,7 @@ function handleTextMouseDown(event: MouseEvent | TouchEvent, textEl: TextElement
       dragOffsetX = (clientX - rect.left) / DISPLAY_SCALE - textEl.x
       dragOffsetY = (clientY - rect.top) / DISPLAY_SCALE - textEl.y
     }
+    event.stopPropagation()
   }
 }
 
@@ -678,7 +680,8 @@ function handleGlobalMove(event: MouseEvent | TouchEvent) {
     if (activeText) {
       activeText.x = mouseX
       activeText.y = mouseY
-      activeText.maxWidth = mouseX - 10
+      const distToEdge = Math.min(mouseX, MAX_DISPLAY_WIDTH - mouseX)
+      activeText.maxWidth = Math.max(100, distToEdge * 2 - 20)
     }
   }
 }
@@ -861,7 +864,7 @@ async function uploadImage() {
                   position: 'absolute',
                   left: `${textEl.x}px`,
                   top: `${textEl.y - textEl.size}px`,
-                  transform: 'translateX(-100%)',
+                  transform: 'translateX(-50%)',
                   touchAction: 'none',
                   minWidth: '50px',
                   minHeight: '20px',
@@ -890,9 +893,8 @@ async function uploadImage() {
                     padding: '0',
                     background: 'transparent',
                     outline: '0',
-                    textAlign: 'right',
+                    textAlign: 'center',
                     width: `${textEl.maxWidth}px`,
-                    height: 'auto',
                     overflow: 'hidden',
                     resize: 'none',
                     display: 'block',
