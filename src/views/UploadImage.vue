@@ -339,6 +339,9 @@ async function generateFinalBlob(): Promise<Blob | null> {
   const canvas = imgCanvasRef.value
   if (!canvas) return null
 
+  // 提高輸出解析度倍率 (例如 3 倍，讓 375px 寬變成 1125px)
+  const OUTPUT_SCALE = 3
+  
   // Save current state to restore later
   const previousActiveId = activeTextElementId.value
   const previousIsEditing = isEditingText.value
@@ -354,29 +357,38 @@ async function generateFinalBlob(): Promise<Blob | null> {
 
     const rect = editorPage.getBoundingClientRect()
     const finalCanvas = document.createElement('canvas')
-    finalCanvas.width = rect.width
-    finalCanvas.height = rect.height
+    
+    // 使用倍率後的尺寸
+    finalCanvas.width = rect.width * OUTPUT_SCALE
+    finalCanvas.height = rect.height * OUTPUT_SCALE
+    
     const finalCtx = finalCanvas.getContext('2d')
     if (!finalCtx) throw new Error('Failed to create final canvas context')
+
+    // 設定高品質縮放
+    finalCtx.imageSmoothingEnabled = true
+    finalCtx.imageSmoothingQuality = 'high'
+    
+    // 整體縮放以適應高解析度
+    finalCtx.scale(OUTPUT_SCALE, OUTPUT_SCALE)
 
     // 1. Draw background (gradient or image)
     const bg = selectedBg.value
     if (bg.type === 'gradient') {
-      finalCtx.globalAlpha = 1.0 // Gradient is opaque
+      finalCtx.globalAlpha = 1.0
       const { x0, y0, x1, y1 } = getGradientCoords(
         bg.angle || 180,
-        finalCanvas.width,
-        finalCanvas.height,
+        rect.width,
+        rect.height,
       )
       const gradient = finalCtx.createLinearGradient(x0, y0, x1, y1)
       gradient.addColorStop(0, bg.value.start)
       gradient.addColorStop(0.5, bg.value.mid)
       gradient.addColorStop(1, bg.value.end)
       finalCtx.fillStyle = gradient
-      finalCtx.fillRect(0, 0, finalCanvas.width, finalCanvas.height)
+      finalCtx.fillRect(0, 0, rect.width, rect.height)
     } else {
-      finalCtx.globalAlpha = 0.4 // Only image background is faded
-      // Draw repeating pattern (small tile like Purikura)
+      finalCtx.globalAlpha = 0.4
       const bgImg = new Image()
       bgImg.src = bg.value
       await new Promise((resolve, reject) => {
@@ -384,14 +396,13 @@ async function generateFinalBlob(): Promise<Blob | null> {
         bgImg.onerror = reject
       })
 
-      // Create a small temporary canvas to hold the tile
       const tileSize = 100
       const tileCanvas = document.createElement('canvas')
-      tileCanvas.width = tileSize
-      tileCanvas.height = tileSize
+      tileCanvas.width = tileSize * OUTPUT_SCALE
+      tileCanvas.height = tileSize * OUTPUT_SCALE
       const tileCtx = tileCanvas.getContext('2d')
       if (tileCtx) {
-        // Draw the image onto the small tile (center crop)
+        tileCtx.scale(OUTPUT_SCALE, OUTPUT_SCALE)
         const imgRatio = bgImg.width / bgImg.height
         let drawWidth, drawHeight, offsetX, offsetY
         if (imgRatio > 1) {
@@ -409,17 +420,20 @@ async function generateFinalBlob(): Promise<Blob | null> {
 
         const pattern = finalCtx.createPattern(tileCanvas, 'repeat')
         if (pattern) {
+          // 修正 Pattern 縮放
+          pattern.setTransform(new DOMMatrix().scale(1/OUTPUT_SCALE, 1/OUTPUT_SCALE))
           finalCtx.fillStyle = pattern
-          finalCtx.fillRect(0, 0, finalCanvas.width, finalCanvas.height)
+          finalCtx.fillRect(0, 0, rect.width, rect.height)
         }
       }
     }
-    finalCtx.globalAlpha = 1.0 // Reset opacity for subsequent drawing
+    finalCtx.globalAlpha = 1.0
 
-    // 2. Draw the image canvas at its correct position and scale
+    // 2. Draw the image canvas at its correct position
     const canvasRect = canvas.getBoundingClientRect()
     const offsetX = (canvasRect.left - rect.left) / DISPLAY_SCALE
     const offsetY = (canvasRect.top - rect.top) / DISPLAY_SCALE
+    
     finalCtx.drawImage(
       canvas,
       offsetX,
